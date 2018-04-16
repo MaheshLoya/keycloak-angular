@@ -6,6 +6,7 @@
  * found in the LICENSE file at https://github.com/mauriciovigolo/keycloak-angular/LICENSE
  */
 import * as Keycloak from 'keycloak-js';
+import * as KeycloakAuthorization from '../keycloak-authz-js/keycloak-authz';
 import { Injectable } from '@angular/core';
 import { HttpHeaders } from '@angular/common/http';
 import { KeycloakConfig, KeycloakOptions } from '../interfaces';
@@ -24,6 +25,18 @@ export class KeycloakService {
   private instance: Keycloak.KeycloakInstance;
   private userProfile: Keycloak.KeycloakProfile;
   private bearerExcludedUrls: string[];
+  private authzInstance: KeycloakAuthorization.KeycloakAuthorizationInstance;
+  private rptExcludedUrls: string[];
+  private _isEnabledAuthorization: boolean;
+  private resourceServerAuthorizationType: string;
+  private resourceServerID: string;
+  private authorizationRequestTemplate: {
+    permissions?: any;
+    ticket?: any;
+    submitRequest?: any;
+    metadata?: any;
+    incrementalAuthorization?: any;
+  };
 
   /**
    * Keycloak initialization. It should be called to initialize the adapter.
@@ -59,10 +72,22 @@ export class KeycloakService {
   init(options: KeycloakOptions = {}): Promise<boolean> {
     return new Promise((resolve, reject) => {
       this.bearerExcludedUrls = options.bearerExcludedUrls || [];
+      this.rptExcludedUrls = options.rptExcludedUrls || [];
+      this._isEnabledAuthorization = options.enableAuthorization || false;
       this.instance = Keycloak(options.config);
       this.instance
         .init(options.initOptions!)
         .success(async authenticated => {
+          if (this._isEnabledAuthorization) {
+            this.authzInstance = KeycloakAuthorization(this.instance);
+            this.authorizationRequestTemplate = options.authorizationRequestTemplate || {};
+            this.resourceServerAuthorizationType = options.resourceServerAuthorizationType || "uma";
+            this.resourceServerAuthorizationType=this.resourceServerAuthorizationType.toLowerCase();
+            if(this.resourceServerAuthorizationType!=="uma" && this.resourceServerAuthorizationType!=="entitlement"){
+              options.resourceServerAuthorizationType="uma";
+            }
+            this.resourceServerID=options.resourceServerID || "";
+          }
           if (authenticated) {
             await this.loadUserProfile();
           }
@@ -290,6 +315,15 @@ export class KeycloakService {
   }
 
   /**
+   * Returns the RPT (Requesting Party Token) if it exists. 
+   *
+   * @return {any}
+   */
+  getRPT(): any {
+    return this.getKeycloakAuthorizationInstance().rpt;
+  }
+
+  /**
    * Returns the logged username.
    * @return {string}
    */
@@ -335,6 +369,29 @@ export class KeycloakService {
   }
 
   /**
+   * Adds a a requesting party token (rpt) token in header. The key & value format is:
+   * Authorization Bearer <token>.
+   * If the headers param is undefined it will create the Angular headers object.
+   *
+   * @param {Promise<Headers>} headers updated header with Authorization and Keycloak token.
+   */
+  addRPTToHeader(headersArg?: HttpHeaders): HttpHeaders {
+    let headers = headersArg;
+    if (!headers) {
+      headers = new HttpHeaders();
+    }
+    try {
+        const token: string = this.getKeycloakAuthorizationInstance().rpt || '';
+        headers = headers.set('Authorization', 'bearer ' + token); 
+      
+      return headers;
+    } catch (error) {
+      console.log(error);
+      throw error;
+    }
+  }
+
+  /**
    * Returns the original Keycloak instance, if you need any customization that
    * this Angular service does not support yet. Use with caution.
    *
@@ -344,6 +401,15 @@ export class KeycloakService {
     return this.instance;
   }
 
+    /**
+   * Returns the original Keycloak Authorization instance.
+   *
+   * @returns {@link KeycloakAuthorization.KeycloakAuthorizationInstance}
+   */
+  getKeycloakAuthorizationInstance(): KeycloakAuthorization.KeycloakAuthorizationInstance {
+    return this.authzInstance;
+  }
+
   /**
    * Returns the excluded URLs that should not be considered by
    * the http interceptor which automatically adds the authorization header in the Http Request.
@@ -351,4 +417,42 @@ export class KeycloakService {
   getBearerExcludedUrls(): string[] {
     return this.bearerExcludedUrls;
   }
+
+  /**
+   * Returns the excluded URLs that should not be considered by
+   * the RPT http interceptor which automatically adds the authorization header in the Http Request.
+   */
+  getRptExcludedUrls(): string[] {
+    return this.rptExcludedUrls;
+  }
+
+  /**
+   * Returns the excluded URLs that should not be considered by
+   * the RPT http interceptor which automatically adds the authorization header in the Http Request.
+   */
+  get isEnabledAuthorization(): boolean {
+    return this._isEnabledAuthorization;
+  }
+  /**
+   * Returns the excluded URLs that should not be considered by
+   * the RPT http interceptor which automatically adds the authorization header in the Http Request.
+   */
+  getAuthorizationRequestTemplate(): {
+    permissions?: any;
+    ticket?: any;
+    submitRequest?: any;
+    metadata?: any;
+    incrementalAuthorization?: any;
+  } {
+    return this.authorizationRequestTemplate;
+  }
+
+  getResourceServerAuthorizationType(): string{
+    return this.resourceServerAuthorizationType;
+  };
+  
+  getResourceServerID(): string{
+    return this.resourceServerID;
+  };
+
 }
